@@ -49,6 +49,62 @@ In order to clean up the deployment
 ansible-playbook -i inventories/devnet-0/inventory.ini cleanup_ethereum.yaml
 ```
 
+## Kurtosis
+The configs in [`./kurtosis/`](./kurtosis/) run a devnet locally (commands are run from the repo root) with the [ethereum-package](https://github.com/ethpandaops/ethereum-package). You need Docker and the [Kurtosis CLI](https://docs.kurtosis.com/install). The commands pin ethereum-package to commit `a4f2204`, which `devnet-eip8321-minimal.yaml` was tested against. Older configs may need a different commit. Some image tags (e.g. `lodestar:unstable`) float, so results can drift.
+
+```shell
+kurtosis engine start
+kurtosis run github.com/ethpandaops/ethereum-package@a4f2204f1347bc7439e8dc63ee70b9003e10e700 --enclave enclave --args-file ./kurtosis/<config>.yaml
+kurtosis enclave inspect enclave            # service list and URLs (dora, beacon APIs, ...)
+kurtosis service logs enclave <service> -f  # follow a service's logs
+kurtosis enclave rm -f enclave              # tear down
+```
+
+Config | Purpose
+------ | -------
+`devnet-eip8321-minimal.yaml` | EIP-8321 (Hash-Chain RANDAO) fork at epoch 2 on top of heze-devnet-2 (without prysm), minimal preset; needs local images, see below
+`devnet-3-minimal.yaml` | heze-devnet-3 ethrex + heze-devnet-2 CL images, minimal preset, 10s Heze slots
+`devnet-3-mainnet.yaml` | heze-devnet-3 ethrex + heze-devnet-2 CL images, mainnet preset, 9s Heze slots
+`devnet-3-local.yaml` | heze-devnet-2 CL images (lodestar `unstable`), mainnet preset, 10s Heze slots, no prysm
+`devnet-2-local.yaml` | heze-devnet-2, minimal preset
+`devnet-1-local.yaml` | FOCIL devnet-0/1 images, mainnet preset, persistent
+`focil-relaunch-test.yaml` | Smaller FOCIL mix for relaunch testing, mainnet preset, persistent
+`devnet-0-sync.yaml` | Checkpoint-syncs local nodes to the public focil-devnet-0 (only works while that network is up)
+
+[`teku-quic-no-tcp-fallback.md`](./kurtosis/teku-quic-no-tcp-fallback.md) is a bug write-up, not an args file.
+
+### EIP-8321 devnet
+[`kurtosis/devnet-eip8321-minimal.yaml`](./kurtosis/devnet-eip8321-minimal.yaml) runs Gloas at epoch 0, Heze at epoch 1 and the **EIP-8321 fork at epoch 2** (fork version `0xe8321001`). It uses the minimal preset.
+
+> As shipped, the fork is only *scheduled*. The bundled heze-devnet-2 CL images don't implement EIP-8321, so they stay on the Heze fork version past epoch 2. The network only switches to `0xe8321001` once every CL runs an EIP-8321 build.
+
+ethereum-package has no EIP-8321 option. Instead, the config uses a genesis generator image built from [`kurtosis/eip8321-genesis/`](./kurtosis/eip8321-genesis/Dockerfile). That image adds `EIP8321_FORK_VERSION` / `EIP8321_FORK_EPOCH` to the CL `config.yaml`. The values are set in `ethereum_genesis_generator_params.extra_env`; edit them there to move the fork.
+
+1. Build the genesis generator and load the EIP-8321 dora build.
+   ```shell
+   docker build -t ethereum-genesis-generator:eip8321 ./kurtosis/eip8321-genesis
+   docker image inspect dora:eip8321   # must exist locally
+   ```
+   - `dora:eip8321` isn't published to a registry. Load or tag your copy under that name.
+   - Kurtosis only pulls images that are missing locally, so both local images are used as-is.
+   - Without `dora:eip8321`, set `dora_params.image: ethpandaops/dora:master` to run the network without the EIP-8321 explorer view.
+2. Point each `cl_image` (and `vc_image`) at a build that implements the EIP-8321 fork, and remove participants that have none.
+   - EIP-8321 changes `BeaconBlockBody` and `BeaconState`, so every CL must run an EIP-8321 build, or it splits off at the fork.
+   - Builds must support the minimal preset.
+   - Prysm is left out of the baseline because `prysm-beacon-chain:heze-devnet-2-minimal` bans its peers and forks off. To test prysm, add a participant as in `devnet-2-local.yaml` with your minimal-preset EIP-8321 `cl_image` / `vc_image` and `vc_extra_params: [--enable-beacon-rest-api]`.
+3. Run the command above with `--enclave eip8321 --args-file ./kurtosis/devnet-eip8321-minimal.yaml`. Check that the fork is scheduled:
+   ```shell
+   curl -s $(kurtosis port print eip8321 cl-2-teku-ethrex http)/eth/v1/config/spec | grep -o '"EIP8321[^,]*'
+   curl -s $(kurtosis port print eip8321 dora http)/api/v1/network/forks   # lists EIP-8321, 0xe8321001, epoch 2
+   ```
+   Dora marks the fork active once epoch 2 is reached, whether or not the chain upgraded. The real check is `/eth/v1/beacon/states/head/fork` returning `0xe8321001`, which never happens on the baseline. Use teku for the spec check, and adjust the service name if you changed participants. Lodestar and lighthouse baseline images drop unknown config keys, so an empty result from them is expected.
+4. Open dora using the URL from `kurtosis enclave inspect eip8321`. EIP-8321 is opt-in per validator, so your validator client must submit `SignedRandaoCommitmentRegistration`s. Register all validators to see results quickly. With EIP-8321 builds, expect:
+   - from epoch 2, the fork version `0xe8321001` (`/eth/v1/beacon/states/head/fork`);
+   - from epoch 2, registrations in blocks;
+   - from 3 epochs after a registration is included (`COMMITMENT_REGISTRATION_DELAY`), a non-zero `hash_chain_reveal` in blocks proposed by registered validators. Other blocks keep it zero and use the BLS reveal;
+   - the chain still finalizing.
+5. Clean up with `kurtosis enclave rm -f eip8321`.
+
 # Spinning up a New Testnet
 To create a new testnet using the infrastructure code, follow these steps:
 

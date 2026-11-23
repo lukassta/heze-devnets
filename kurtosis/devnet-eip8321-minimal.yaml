@@ -1,0 +1,40 @@
+# EIP-8321 (Hash-Chain RANDAO) devnet on heze-devnet-2: Gloas 0, Heze 1, EIP-8321 at epoch 2.
+# Needs local images dora:eip8321 and ethereum-genesis-generator:eip8321; see README "EIP-8321 devnet".
+# The shipped heze-devnet-2 CL images only schedule the fork: swap in EIP-8321 builds to activate it.
+participants_matrix:
+  el:
+    - el_type: ethrex
+      el_image: ethpandaops/ethrex:heze-devnet-2
+  cl:
+    - cl_type: lodestar
+      cl_image: ghcr.io/edva-code/lodestar:eip8321-8a11e97f6
+      supernode: true
+    # - cl_type: prysm
+    #   cl_image: ghcr.io/humantvis/prysm-beacon:eip8321-minimal
+    #   vc_image: ghcr.io/humantvis/prysm-validator:eip8321-minimal
+    #   vc_extra_params:
+    #     - --enable-beacon-rest-api
+    #   supernode: true
+    - cl_type: grandine
+      cl_image: ghcr.io/lukassta/grandine:eip8321-minimal
+      supernode: true
+
+network_params:
+  preset: minimal
+  gloas_fork_epoch: 0
+  heze_fork_epoch: 0
+
+additional_services:
+  - spamoor
+  - dora
+
+global_log_level: debug
+
+ethereum_genesis_generator_params:
+  image: ethereum-genesis-generator:eip8321
+  extra_env:
+    EIP8321_FORK_VERSION: "0xe8321001"
+    EIP8321_FORK_EPOCH: 1
+
+dora_params:
+  image: ghcr.io/augas555/dora:eip8321
