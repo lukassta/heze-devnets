@@ -19,6 +19,9 @@ participants_matrix:
     - cl_type: grandine
       cl_image: ghcr.io/lukassta/grandine:eip8321-minimal
       supernode: true
+    - cl_type: nimbus
+      cl_image: ghcr.io/keusinis/nimbus-eth2:eip8321-minimal
+      supernode: true
 
 network_params:
   preset: minimal
